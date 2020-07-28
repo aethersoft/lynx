@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 24.1.2, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+	 viewBox="0 0 32 32" style="enable-background:new 0 0 32 32;" xml:space="preserve">
+<style type="text/css">
+	.st0{opacity:0.1;fill:#00A900;}
+	.st1{fill:#00A900;}
+	.st2{opacity:0.9;fill:#FFFFFF;}
+	.st3{opacity:0.65;}
+	.st4{opacity:0.4;}
+	.st5{opacity:0.45;fill:#FFFFFF;}
+	.st6{opacity:0.2;}
+	.st7{opacity:0.2;fill:#FFFFFF;}
+	.st8{fill:#FFFFFF;}
+	.st9{opacity:0.3;fill:#FFFFFF;}
+</style>
+<rect class="st0" width="32" height="32"/>
+<rect x="3" y="3" class="st1" width="26" height="26"/>
+<path class="st1" d="M14,23"/>
+<polygon class="st2" points="12,12 9,12 18,29 29,29 "/>
+<polygon class="st3" points="12,3 29,29 12,12 "/>
+<polygon class="st4" points="3,3 12,3 12,12 "/>
+<polygon class="st5" points="9,12 3,12 18,29 "/>
+<polygon class="st6" points="12,3 29,3 29,29 "/>
+<polygon class="st7" points="18,29 3,29 3,12 "/>
+<path class="st8" d="M64,7"/>
+<path class="st8" d="M11,26"/>
+<polygon class="st9" points="9,12 3,3 3,12 "/>
+<path class="st8" d="M49,16"/>
+</svg>

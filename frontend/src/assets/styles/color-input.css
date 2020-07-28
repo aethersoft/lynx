@@ -1,0 +1,24 @@
+.color-input {
+    color: #495057 !important;
+    background: #ffffff !important;
+}
+
+.color-input-preview {
+    min-width: 36px;
+}
+
+.huebee__container {
+    border: 1px solid rgba(0, 0, 0, .2);
+    border-radius: .3rem;
+    background: #F8F8F8;
+    color: #212529;
+    z-index: 1060;
+}
+
+.huebee__close-button {
+    visibility: hidden;
+}
+
+.huebee__close-button__x {
+    stroke-width: 2;
+}

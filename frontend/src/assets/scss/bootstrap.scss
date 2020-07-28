@@ -1,0 +1,19 @@
+// Custom.scss
+
+$theme-colors: (
+    "primary": #00A866,
+    "secondary": #FFCF0D,
+    "accent": #A219FF,
+);
+
+$font-stack: Helvetica, sans-serif;
+$primary-color: #333;
+
+body {
+  font: 100% $font-stack;
+}
+
+// Extend Bootstrap with Floating Labels in Forms
+@import "floating-labels";
+
+@import "../../../node_modules/bootstrap/scss/bootstrap";
