@@ -60,8 +60,8 @@
             <tbody>
             <tr v-if="user_role_list.length === 0">
                 <td colspan="5" class="text-center">
-                    <h4 class="display-5">No User Roles Found</h4>
-                    <p class="text-muted mb-0">Try creating a new user role</p>
+                    <h4 class="display-5">No Contributors Found</h4>
+                    <p class="text-muted mb-0">Try assigning a new user</p>
                 </td>
             </tr>
             <tr v-else v-for="(u, i) in user_role_list" :key="i">
@@ -100,7 +100,7 @@
                 },
                 user_roles: {
                     admin: 'Administer',
-                    contributor: 'Contributor',
+                    coder: 'Annotator',
                 },
                 validated: {
                     user_role: false,

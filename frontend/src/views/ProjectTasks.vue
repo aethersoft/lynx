@@ -6,7 +6,7 @@
                     <span class="oi oi-plus" title="plus" aria-hidden="true"></span>
                 </button>
             </div>
-            <!-- Create Project Modal -->
+            <!-- Create Task Modal -->
             <div class="modal fade" id="createTaskModal" tabindex="-1" role="dialog"
                  aria-labelledby="createTaskModalLabel" aria-hidden="true">
                 <div class="modal-dialog modal-lg" role="document">

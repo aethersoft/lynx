@@ -25,7 +25,11 @@
             axios.get(project_url)
                 .then(response => {
                     let payload = response.data;
-                    this.project = payload.data;
+                    if (payload.status === 'success') {
+                        this.project = payload.data;
+                    } else {
+                        console.log(payload);
+                    }
                 });
         },
     }

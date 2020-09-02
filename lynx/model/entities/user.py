@@ -17,8 +17,9 @@ class User(db.Model):
     last_name = db.Column(db.String(64), index=True)
     email = db.Column(db.String(64), index=True)
     # Relationships
-    projects = db.relationship('RoleAssignment', backref='user', lazy=True)
-    annotation_sets = db.relationship('AnnotationSet', backref='user', lazy=True)
+    projects = db.relationship('Project', backref='owner', lazy=True, cascade="all, delete-orphan")
+    assigned_projects = db.relationship('UserRole', backref='user', lazy=True, cascade="all, delete-orphan")
+    annotation_sets = db.relationship('AnnotationSet', backref='user', lazy=True, cascade="all, delete-orphan")
 
 
 class UserSchema(Schema):

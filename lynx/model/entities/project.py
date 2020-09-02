@@ -28,10 +28,12 @@ class Project(db.Model):
     presenter = db.Column(db.Text)
     # Number of times each document should be annotated (maximum number of users who annotate a document)
     redundancy = db.Column(db.Integer)
+    # Set project owner
+    owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     # Relationships
     tasks = db.relationship('Task', backref='project', lazy=True, cascade="all, delete-orphan")
     documents = db.relationship('Document', backref='project', lazy=True, cascade="all, delete-orphan")
-    users = db.relationship('RoleAssignment', backref='project', lazy=True, cascade="all, delete-orphan")
+    user_roles = db.relationship('UserRole', backref='project', lazy=True, cascade="all, delete-orphan")
 
 
 class ProjectSchema(Schema):
@@ -39,6 +41,7 @@ class ProjectSchema(Schema):
     name = fields.String(required=True, validate=[validate.Length(min=1, max=256)])
     description = fields.String(required=True, validate=[validate.Length(min=1, max=2048)])
     presenter = fields.String(default=DEFAULT_PRESENTER)
+    owner_id = fields.Integer(required=True)
     scheduler = fields.String(validate=validate.OneOf(list(zip(*scheduler_types))[1]), default=scheduler_types[0][1])
     redundancy = fields.Integer(default=3)
 
