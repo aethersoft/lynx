@@ -86,7 +86,7 @@
                     <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdown">
                         <Avatar/>
                         <template v-if="isAuthenticated">
-                            <div class="btn-group btn-group-toggle p-3 w-100" data-toggle="buttons">
+                            <div class="btn-group btn-group-sm p-3">
                                 <a class="btn btn-primary"
                                    v-bind:class="{'active':($route.meta.navbar.active==='home')}"
                                    href="/">Contributor</a>

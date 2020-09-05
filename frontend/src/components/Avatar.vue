@@ -2,7 +2,7 @@
     <div class="media" style="min-width: 256px;">
         <div class="media-body">
             <template v-if="isAuthenticated">
-                <p class="avatar-name"> {{ user.first_name }} {{ user.last_name }}</p>
+                <p class="avatar-name">{{ user.first_name }} {{ user.last_name }}</p>
                 <p class="avatar-username">Signed in as {{ user.username }}</p>
             </template>
             <template v-else>

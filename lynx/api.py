@@ -1,4 +1,5 @@
 import json
+import logging
 
 from flask import Blueprint, request, g
 from flask_restful import Resource, Api
@@ -18,6 +19,8 @@ __all__ = [
     'api_blueprint'
 ]
 
+logger = logging.getLogger(__name__)
+
 api_blueprint = Blueprint('api', __name__, template_folder='templates')
 
 api_blueprint.version = 1
@@ -25,7 +28,62 @@ api_blueprint.url_prefix = f'/api/v{api_blueprint.version}'
 api_blueprint.config = {}
 
 
-# noinspection PyMethodMayBeStatic
+def get_project(project_id, user_id=None):
+    if user_id is None:
+        user_id = g.current_user.id
+    result = db.session.query(Project, UserRole) \
+        .join(UserRole, UserRole.project_id == Project.id, isouter=True) \
+        .filter(and_(Project.id == project_id, or_(UserRole.user_id == user_id, Project.owner_id == user_id))) \
+        .one_or_none()
+    project, user_role = result[0], result[1]
+    if project is None:
+        return None
+    # project owner can do anything
+    if project.owner_id == user_id:
+        return project
+    # other wise if user_role is not defined then not authorized
+    assert user_role is not None and user_role.role == 'admin', {
+        '_root': [f'You are not authorized to view the requested project.']}
+    return project
+
+
+def get_task(task_id, user_id=None):
+    if user_id is None:
+        user_id = g.current_user.id
+    result = db.session.query(Task, Project, UserRole) \
+        .join(Project, Project.id == Task.project_id) \
+        .join(UserRole, UserRole.project_id == Project.id, isouter=True) \
+        .filter(and_(Task.id == task_id, or_(UserRole.user_id == user_id, Project.owner_id == user_id))) \
+        .one_or_none()
+    task, project, user_role = result[0], result[1], result[2]
+    if task is None:
+        return None
+    if project.owner_id == user_id:
+        return task
+    assert user_role is not None and user_role.role == 'admin', {
+        '_root': [f'You are not authorized to view requested task.']}
+    return task
+
+
+def get_document(document_id, user_id=None):
+    if user_id is None:
+        user_id = g.current_user.id
+    result = db.session.query(Document, Project, UserRole) \
+        .join(Document, Project.id == Document.project_id) \
+        .join(Project, Project.id == Task.project_id) \
+        .join(UserRole, UserRole.project_id == Project.id, isouter=True) \
+        .filter(and_(Document.id == document_id, or_(UserRole.user_id == user_id, Project.owner_id == user_id))) \
+        .one_or_none()
+    document, project, user_role = result[0], result[1], result[2]
+    if document is None:
+        return None
+    if project.owner_id == user_id:
+        return document
+    assert user_role is not None and user_role.role == 'admin', {
+        '_root': [f'You are not authorized to view requested document.']}
+    return document
+
+
 class RestfulAPI(Api):
     def handle_error(self, e):
         if isinstance(e, ValidationError):
@@ -37,8 +95,9 @@ class RestfulAPI(Api):
         if isinstance(e, IntegrityError):
             return js.fail(data={'_root': [e.args]})
         return js.error(
-            data={
-                '_root': ['We found an error in the server. Please contact your administrator to resolve the issue.']},
+            data={'_root': [
+                'Service error. Please contact your administrator to resolve the issue.'
+            ]},
             message=str(e)
         )
 
@@ -53,6 +112,7 @@ api = swagger.docs(
 )
 
 
+@auth.error_handler
 def auth_error(status=401):
     return js.error('Access Denied', {'auth': [f'Access Denied {status}']}), status
 
@@ -63,26 +123,41 @@ def record_params(setup_state):
     api.config = dict([(key, value) for (key, value) in app.config.items()])
     app.config['API_VERSION'] = api_blueprint.version
     app.config['API_URL_PREFIX'] = api_blueprint.url_prefix
-    token_auth.error_handler(auth_error)
-    basic_auth.error_handler(auth_error)
 
 
-@basic_auth.verify_password
+@auth.verify_password
 def verify_password(username, password):
-    user = User.query.filter_by(username=username).first()
+    """ Verify the provided username with password and return whether user is authorized.
+
+    :param username: username of the user.
+    :param password: password of the user as plain text.
+    :return: whether password matches the user\'s password.
+    """
+    user = User.query.filter_by(username=username).one_or_none()
     if not user or not check_password_hash(user.password, password):
         return False
     g.current_user = user
     return True
 
 
-def generate_token(user, expiration=3600):
+def generate_token(user, expiration=10):
+    """ Generates a token for user that expires in {expiration} time.
+
+    :param user: token is created for provided user.
+    :param expiration: token will automatically expire in this time.
+    :return: generated token
+    """
     s = Serializer(api.config['SECRET_KEY'], expires_in=expiration)
     return s.dumps({'id': user.id})
 
 
-@token_auth.verify_token
+@auth.verify_token
 def verify_token(token):
+    """ Verifies token, loads current user into global variable and return verification status.
+
+    :param token: token to verify.
+    :return: whether token is valid.
+    """
     s = Serializer(api.config['SECRET_KEY'])
     try:
         data = s.loads(token)
@@ -130,8 +205,8 @@ class ProjectsEndpoint(Resource):
         limit = request.args.get('limit', None)
         user_id = g.current_user.id
         query = Project.query \
-            .join(RoleAssignment, RoleAssignment.project_id == Project.id) \
-            .filter(and_(RoleAssignment.user_id == user_id, RoleAssignment.role == 'admin'))
+            .join(UserRole, UserRole.project_id == Project.id, isouter=True) \
+            .filter(or_(Project.owner_id == user_id, and_(UserRole.user_id == user_id, UserRole.role == 'admin')))
         paginate = utils.paginate(query, limit, offset)
         data = ProjectSchema().dump(paginate.items, many=True)
         return js.success({
@@ -164,18 +239,13 @@ class ProjectsEndpoint(Resource):
     @auth.login_required
     def post(self):
         data = request.get_json()
+        # add user details as owner
+        data['owner_id'] = g.current_user.id
         schema = ProjectSchema()
         data = schema.load(data, unknown=EXCLUDE)
         project = Project(**data)
         # Create project (do not commit)
-        op.create_object(project, commit=False)
-        data = {
-            'project': project,
-            'user_id': g.current_user.id,
-            'role': 'admin'
-        }
-        role_assignment = RoleAssignment(**data)
-        op.create_object(role_assignment)
+        op.create_object(project)
         data = schema.dump(project)
         return js.success(data)
 
@@ -189,8 +259,9 @@ class ProjectByIDEndpoint(Resource):
         parameters=[],
         responseMessages=[],
     )
+    @auth.login_required
     def get(self, project_id):
-        project = Project.query.get(project_id)
+        project = get_project(project_id)
         data = ProjectSchema().dump(project)
         return js.success(data)
 
@@ -212,7 +283,7 @@ class ProjectByIDEndpoint(Resource):
         data = request.get_json()
         schema = ProjectSchema()
         schema.load(data, partial=True, unknown=EXCLUDE)
-        project = Project.query.get(project_id)
+        project = get_project(project_id)
         op.update_object(project, data)
         data = schema.dump(project)
         return js.success(data)
@@ -225,7 +296,7 @@ class ProjectByIDEndpoint(Resource):
     )
     @auth.login_required
     def delete(self, project_id):
-        project = Project.query.get(project_id)
+        project = get_project(project_id)
         op.delete_object(project)
         return js.success()
 
@@ -243,7 +314,13 @@ class DocumentsEndpoint(Resource):
     def get(self, project_id):
         offset = request.args.get('offset', None)
         limit = request.args.get('limit', None)
-        query = Document.query.filter_by(project_id=project_id)
+        user_id = g.current_user.id
+        query = Document.query \
+            .join(Project, Project.id == Document.project_id) \
+            .join(UserRole, UserRole.project_id == Project.id, isouter=True) \
+            .filter(or_(and_(UserRole.user_id == user_id, UserRole.role == 'admin'),
+                        Project.owner_id == user_id)) \
+            .filter(Project.id == project_id)
         paginate = utils.paginate(query, limit, offset)
         data = DocumentSchema().dump(paginate.items, many=True)
         return js.success({
@@ -278,6 +355,10 @@ class DocumentsEndpoint(Resource):
     )
     @auth.login_required
     def post(self, project_id):
+        # Authorize & Validate
+        assert get_project(project_id) is not None, {'data': {
+            '_root': 'Invalid project. Please try with a valid project ID.'
+        }}
         if 'file' in request.files:
             file = request.files['file']
             payload = self.process_file(file)
@@ -332,9 +413,13 @@ class DocumentByIDEndpoint(Resource):
     )
     @auth.login_required
     def put(self, project_id, document_id):
+        # get params
         data = request.get_json()
-        document = Document.query.get(document_id)
+        # Authenticate and get
+        document = get_document(document_id)
+        # update object
         op.update_object(document, data)
+        # return updated
         data = DocumentSchema().dump(document)
         return js.success(data)
 
@@ -346,8 +431,11 @@ class DocumentByIDEndpoint(Resource):
     )
     @auth.login_required
     def delete(self, project_id, document_id):
-        document = Document.query.get(document_id)
+        # Authenticate and get
+        document = get_document(document_id)
+        # delete document
         op.delete_object(document)
+        # return success
         return js.success()
 
 
@@ -362,7 +450,15 @@ class TasksEndpoint(Resource):
     )
     @auth.login_required
     def get(self, project_id):
-        tasks = Task.query.filter_by(project_id=project_id).all()
+        # Assert project authorization for authenticated user
+        user_id = g.current_user.id
+        tasks = Task.query \
+            .join(Project, Project.id == Task.project_id) \
+            .join(UserRole, UserRole.project_id == Project.id, isouter=True) \
+            .filter(or_(and_(UserRole.user_id == user_id, UserRole.role == 'admin'),
+                        Project.owner_id == user_id)) \
+            .filter_by(project_id=project_id) \
+            .all()
         data = TaskSchema().dump(tasks, many=True)
         return js.success(data)
 
@@ -383,6 +479,12 @@ class TasksEndpoint(Resource):
     )
     @auth.login_required
     def post(self, project_id):
+        # authenticate
+        project = get_project(project_id)
+        # Validate
+        assert project is not None, {'data': {
+            '_root': 'Invalid project. Please try with a valid project ID.'
+        }}
         data = request.get_json()
         data.update({'project_id': project_id})
         labels = utils.iferror(lambda: data['labels'], [])
@@ -416,7 +518,8 @@ class TaskByIDEndpoint(Resource):
     )
     @auth.login_required
     def get(self, project_id, task_id):
-        task = Task.query.get(task_id)
+        # authorize & get
+        task = get_task(task_id)
         data = TaskSchema().dump(task)
         return js.success(data)
 
@@ -435,12 +538,15 @@ class TaskByIDEndpoint(Resource):
     )
     @auth.login_required
     def put(self, project_id, task_id):
+        # authenticate
+        task = get_task(task_id)
+        # validate input
         data = request.get_json()
         data.update({'project_id': project_id})
         schema = TaskSchema()
         data_labels = data['labels']
         data = schema.load(data, unknown=EXCLUDE)
-        task = Task.query.get(task_id)
+        # update object
         task.labels[:] = []
         for data_label in data_labels:
             label = None
@@ -455,6 +561,7 @@ class TaskByIDEndpoint(Resource):
                 op.update_object(label, data_label, commit=False)
             task.labels.append(label)
         op.update_object(task, data)
+        # return status
         data = schema.dump(task)
         return js.success(data)
 
@@ -465,7 +572,9 @@ class TaskByIDEndpoint(Resource):
         responseMessages=[],
     )
     def delete(self, project_id, task_id):
-        task = Task.query.get(task_id)
+        # authenticate
+        task = get_task(task_id)
+        # delete object
         op.delete_object(task)
         return js.success()
 
@@ -539,6 +648,10 @@ class UserByIDEndpoint(Resource):
     )
     @auth.login_required
     def put(self, user_id):
+        # Assert project authorization for authenticated user
+        assert g.current_user.id == user_id, {
+            '_root': ['You are not authorized to update another account.']
+        }
         payload = request.get_json()
         schema = UserSchema()
         data = schema.load(payload, unknown=EXCLUDE)
@@ -557,6 +670,10 @@ class UserByIDEndpoint(Resource):
     )
     @auth.login_required
     def delete(self, user_id):
+        # Assert project authorization for authenticated user
+        assert g.current_user.id == user_id, {
+            '_root': ['You are not authorized to delete another account.']
+        }
         user = User.query.get(user_id)
         op.delete_object(user)
         return js.success()
@@ -573,8 +690,14 @@ class RoleAssignmentsEndpoint(Resource):
     )
     @auth.login_required
     def get(self, project_id):
-        user_roles = RoleAssignment.query.filter_by(project_id=project_id).all()
-        data = RoleAssignmentSchema().dump(user_roles, many=True)
+        # Authenticate & get
+        project = get_project(project_id)
+        # Validate
+        assert project is not None, {'data': {
+            '_root': 'Invalid project. Please try with a valid project ID.'
+        }}
+        # return
+        data = UserRoleSchema().dump(project.user_roles, many=True)
         return js.success(data)
 
     @swagger.operation(
@@ -594,20 +717,23 @@ class RoleAssignmentsEndpoint(Resource):
     )
     @auth.login_required
     def post(self, project_id):
+        # Authenticate & get
+        project = get_project(project_id)
+        # Validate
+        assert project is not None, {'data': {
+            '_root': 'Invalid project. Please try with a valid project ID.'
+        }}
         payload = request.get_json()
         # get user id
-        assert 'username' in payload, {'username': [
-            'Required field \'username\' not found.'
-        ]}
+        assert 'username' in payload, {'username': ['Required field \'username\' not found.']}
         username = payload['username']
-        user = User.query.filter_by(username=username).first()
-        assert user is not None, {'_root': [
-            'No such user in the system.'
-        ]}
+        user = User.query.filter_by(username=username).one_or_none()
+        assert user is not None, {'_root': ['No such user in the system.']}
         payload.update({'user_id': user.id, 'project_id': project_id})
-        schema = RoleAssignmentSchema()
+        # create object
+        schema = UserRoleSchema()
         data = schema.load(payload, unknown=EXCLUDE)
-        role_assignment = RoleAssignment(**data)
+        role_assignment = UserRole(**data)
         op.create_object(role_assignment)
         data = schema.dump(role_assignment)
         return js.success(data)
@@ -620,22 +746,18 @@ class RoleAssignmentsEndpoint(Resource):
     )
     @auth.login_required
     def delete(self, project_id):
+        # get payload
         payload = request.get_json()
-        # get user id
-        assert 'username' in payload, {'username': [
-            'Required field \'username\' not found.'
-        ]}
-        username = payload['username']
-        user = User.query.filter_by(username=username).first()
-        assert user is not None, {'_root': [
-            'No such user in the system.'
-        ]}
-        # get user role to delete
-        assert 'role' in payload, {'role': [
-            'Required field \'role\' not found.'
-        ]}
-        role = payload['role']
-        role = RoleAssignment.query.filter_by(project_id=project_id, user_id=user.id, role=role).first()
+        # validate params
+        assert 'username' in payload, {'username': ['Required field \'username\' not found.']}
+        # authenticate
+        project = get_project(project_id)
+        # validate
+        assert project is not None, {'data': {'_root': ['Invalid project. Please enter a valid project ID.']}}
+        user = User.query.filter_by(username=payload['username']).one_or_none()
+        assert user is not None, {'_root': ['No such user in the system.']}
+        role = UserRole.query.filter_by(project_id=project_id, user_id=user.id).one_or_none()
+        assert role is not None, {'data': {'_root': ['Role not assigned to provided user.']}}
         op.delete_object(role)
         return js.success()
 
@@ -662,10 +784,10 @@ class AnnotateProjectsByIDEndpoint(Resource):
             .join(Project, Project.id == Document.project_id) \
             .outerjoin(subquery, Document.id == subquery.c.document_id) \
             .filter(or_(subquery.c.frequency.is_(None), Project.redundancy > subquery.c.frequency)) \
-            .join(RoleAssignment, RoleAssignment.project_id == Project.id) \
-            .filter(RoleAssignment.user_id == user_id) \
+            .join(UserRole, UserRole.project_id == Project.id) \
+            .filter(UserRole.user_id == user_id) \
             .outerjoin(AnnotationSet, and_(AnnotationSet.document_id == Document.id,
-                                           AnnotationSet.user_id == RoleAssignment.user_id), ) \
+                                           AnnotationSet.user_id == UserRole.user_id), ) \
             .filter(and_(or_(AnnotationSet.completed.is_(None), AnnotationSet.completed.is_(False)),
                          or_(AnnotationSet.skipped.is_(None), AnnotationSet.skipped.is_(False)))) \
             .first()
@@ -778,8 +900,8 @@ class AnnotateProjectsEndpoint(Resource):
         user_id = g.current_user.id
         schema = ProjectSchema()
         query = Project.query \
-            .join(RoleAssignment, RoleAssignment.project_id == Project.id) \
-            .filter(and_(RoleAssignment.user_id == user_id))
+            .join(UserRole, UserRole.project_id == Project.id, isouter=True) \
+            .filter(or_(UserRole.user_id == user_id, Project.owner_id == user_id))
         paginate = utils.paginate(query, limit, offset)
         data = schema.dump(paginate.items, many=True)
         return js.success({
@@ -816,10 +938,11 @@ class AnnotateDocumentsEndpoint(Resource):
         except ValueError as _:
             limit = 20
         query = db.session.query(Document, AnnotationSet) \
-            .outerjoin(AnnotationSet, AnnotationSet.document_id == Document.id) \
+            .join(AnnotationSet, AnnotationSet.document_id == Document.id, isouter=True) \
             .join(Project, Project.id == Document.project_id) \
-            .join(RoleAssignment, RoleAssignment.project_id == Project.id) \
-            .filter(and_(RoleAssignment.user_id == user_id, Document.project_id == project_id))
+            .join(UserRole, UserRole.project_id == Project.id) \
+            .filter(and_(or_(UserRole.user_id == user_id, Project.owner_id == user_id),
+                         Document.project_id == project_id))
         # Filter by flagged options
         var = request.args.get('flagged', None)
         if var != 'none':
@@ -867,12 +990,12 @@ class AnnotateDocumentsByIDEndpoint(Resource):
     )
     @auth.login_required
     def get(self, project_id, document_id):
-        user_id = g.current_user.id
-        document = Document.query.get(document_id)
+        document = get_document(document_id)
         assert document is not None, {'_root': ['Document not found.']}
         document_data = DocumentSchema().dump(document)
         document_data['project'] = ProjectSchema().dump(document.project)
         document_data['project']['tasks'] = TaskSchema().dump(document.project.tasks, many=True)
+        user_id = g.current_user.id
         annotation_set = op.get_annotation_set(user_id, document.id)
         annotation_set_data = AnnotationSetSchema().dump(annotation_set)
         data = {'document': document_data, 'annotation_set': annotation_set_data}
@@ -880,19 +1003,34 @@ class AnnotateDocumentsByIDEndpoint(Resource):
 
 
 # Entity Endpoints
+# Auth - Anyone Logged In
 api.add_resource(TokenEndpoint, '/token')
+# Auth - Owner / Admin
 api.add_resource(ProjectsEndpoint, '/projects')
+# Auth - Owner / Admin
 api.add_resource(ProjectByIDEndpoint, '/projects/<int:project_id>')
+# Auth - Owner / Admin
 api.add_resource(DocumentsEndpoint, '/projects/<int:project_id>/documents')
+# Auth - Owner / Admin
 api.add_resource(DocumentByIDEndpoint, '/projects/<int:project_id>/documents/<int:document_id>')
+# Auth - Owner / Admin
 api.add_resource(TasksEndpoint, '/projects/<int:project_id>/tasks')
+# Auth - Owner / Admin
 api.add_resource(TaskByIDEndpoint, '/projects/<int:project_id>/tasks/<int:task_id>')
-api.add_resource(UsersEndpoint, '/users')
-api.add_resource(UserByIDEndpoint, '/users/<int:user_id>')
+# Auth - Owner / Admin
 api.add_resource(RoleAssignmentsEndpoint, '/projects/<int:project_id>/users')
+# Auth - Anyone
+api.add_resource(UsersEndpoint, '/users')
+# Auth - User with provided ID
+api.add_resource(UserByIDEndpoint, '/users/<int:user_id>')
 # Annotation Action Endpoints
+# Auth - Owner / Assigned (Admin / Annotator)
 api.add_resource(AnnotateEndpoint, '/annotate')
+# Auth - Owner / Assigned (Admin / Annotator)
 api.add_resource(AnnotateProjectsEndpoint, '/annotate/projects')
+# Auth - Owner / Assigned (Admin / Annotator)
 api.add_resource(AnnotateProjectsByIDEndpoint, '/annotate/projects/<int:project_id>')
+# Auth - Owner / Assigned (Admin / Annotator)
 api.add_resource(AnnotateDocumentsEndpoint, '/annotate/projects/<int:project_id>/documents')
+# Auth - Owner / Assigned (Admin / Annotator)
 api.add_resource(AnnotateDocumentsByIDEndpoint, '/annotate/projects/<int:project_id>/documents/<int:document_id>')

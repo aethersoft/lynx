@@ -1,11 +1,11 @@
-from .annotation_set import *
 from .annotation import *
+from .annotation_set import *
 from .document import *
 from .label import *
 from .project import *
 from .task import *
 from .user import *
-from .role_assignment import *
+from .user_role import *
 
 __all__ = [
     'AnnotationSet',
@@ -20,8 +20,8 @@ __all__ = [
     'LabelSchema',
     'Project',
     'ProjectSchema',
-    'RoleAssignment',
-    'RoleAssignmentSchema',
+    'UserRole',
+    'UserRoleSchema',
     'Task',
     'TaskSchema',
     'User',
